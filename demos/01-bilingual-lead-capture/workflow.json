@@ -1,0 +1,260 @@
+[
+  {
+    "id": "demo1leadcapture",
+    "name": "Demo 1 - Bilingual lead capture (synthetic)",
+    "nodes": [
+      {
+        "id": "n1",
+        "name": "Lead webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          0,
+          200
+        ],
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "clinic-lead",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "webhookId": "00000000-0000-0000-0000-000000000001"
+      },
+      {
+        "id": "n2",
+        "name": "Validate input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          220,
+          200
+        ],
+        "parameters": {
+          "jsCode": "const b = $input.first().json.body || {};\nconst clean = s => String(s ?? '').replace(/<[^>]*>/g, '').trim();\nif (b.website) { throw new Error('Rejected: honeypot field filled (spam)'); }\nconst lead = {\n  name: clean(b.name).slice(0, 80),\n  email: clean(b.email).slice(0, 120),\n  phone: clean(b.phone).slice(0, 30),\n  message: clean(b.message).slice(0, 1500),\n  clinic: clean(b.clinic || 'Clinique Physio Rideau (DEMO)').slice(0, 80),\n  mock: b.mock === true,\n  receivedAt: new Date().toISOString(),\n};\nconst errors = [];\nif (!lead.name) errors.push('name');\nif (!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(lead.email)) errors.push('email');\nif (lead.message.length < 5) errors.push('message');\nif (errors.length) { throw new Error('Invalid input: ' + errors.join(', ')); }\nreturn [{ json: lead }];"
+        }
+      },
+      {
+        "id": "n3",
+        "name": "Mock mode?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          440,
+          200
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "c1",
+                "leftValue": "={{ $json.mock }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "n4",
+        "name": "Mock reply (demo only)",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          660,
+          80
+        ],
+        "parameters": {
+          "jsCode": "// DEMO ONLY: canned reply used when the request has \"mock\": true (tests without an API key).\nconst lead = $input.first().json;\nconst fr = /\\b(bonjour|bonsoir|je |vous|rendez-vous|svp|merci|nous|j'aimerais|disponibilit)/i.test(lead.message);\nconst urgent = /(chest pain|can't breathe|cannot breathe|douleur (à|a) la poitrine|difficult(é|e) (à|a) respirer)/i.test(lead.message);\nconst health = /(pain|douleur|injur|blessure|back|dos|knee|genou|surgery|chirurgie)/i.test(lead.message);\nconst first = lead.name.split(' ')[0];\nconst out = fr ? {\n  language: 'fr', intent: 'new_booking', urgent, contains_health_info: health,\n  subject: 'Votre demande de rendez-vous',\n  body: `Bonjour ${first},\\n\\nMerci de nous avoir contactés. Nous serions heureux de vous accueillir à la clinique. Vous pouvez choisir l\\u2019heure qui vous convient ici : https://example.com/book-demo\\n\\nSi vous préférez, répondez simplement à ce courriel avec vos disponibilités.\\n\\nL\\u2019équipe de ${lead.clinic}`\n} : {\n  language: 'en', intent: 'new_booking', urgent, contains_health_info: health,\n  subject: 'Your appointment request',\n  body: `Hi ${first},\\n\\nThanks for reaching out. We\\u2019d be happy to see you at the clinic. You can pick a time that suits you here: https://example.com/book-demo\\n\\nIf you prefer, just reply to this email with your availability.\\n\\nThe ${lead.clinic} team`\n};\nreturn [{ json: { ...lead, source: 'mock', claudeText: JSON.stringify(out) } }];"
+        }
+      },
+      {
+        "id": "n5",
+        "name": "Build Claude request",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          660,
+          320
+        ],
+        "parameters": {
+          "jsCode": "const lead = $input.first().json;\nconst BOOKING_URL = 'https://example.com/book-demo';  // placeholder for the demo\nconst system = \"You are the front-desk assistant for {clinic}, a private physiotherapy clinic in the Ottawa-Gatineau area. Write a short, warm reply to a new-patient inquiry.\\\\nRULES:\\\\n1. Detect the language of the message (en or fr) and reply in that language. If it is mixed, reply in French.\\\\n2. Never give medical advice, diagnoses or treatment suggestions. Never ask the person for health details.\\\\n3. If the message contains health information (symptoms, injuries, conditions, medications), set contains_health_info=true and do NOT repeat that information in your reply.\\\\n4. If the message suggests an emergency (e.g. chest pain, trouble breathing, severe bleeding), set urgent=true and tell the person to call 911 or go to the nearest emergency department instead of waiting for a booking.\\\\n5. Offer to book through this link: {booking}. Length 60-110 words. Sign as 'L\\\\u2019\\\\u00e9quipe de {clinic}' (French) or 'The {clinic} team' (English).\\\\n6. intent must be one of: new_booking, pricing, insurance, hours_location, other.\\\\nReturn ONLY a JSON object, no other text, with keys: language, intent, urgent, contains_health_info, subject, body.\".replaceAll('{clinic}', lead.clinic).replaceAll('{booking}', BOOKING_URL);\nconst claudeBody = {\n  model: 'claude-haiku-5-5',\n  max_tokens: 600,\n  system,\n  messages: [{ role: 'user', content: JSON.stringify({ name: lead.name, message: lead.message }) }],\n};\nreturn [{ json: { ...lead, claudeBody } }];\n"
+        }
+      },
+      {
+        "id": "n6",
+        "name": "Claude draft",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          880,
+          320
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.anthropic.com/v1/messages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "content-type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json.claudeBody) }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+            "name": "Anthropic API key"
+          }
+        },
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 2000
+      },
+      {
+        "id": "n7",
+        "name": "Parse & guardrails",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1100,
+          200
+        ],
+        "parameters": {
+          "jsCode": "const lead = $input.first().json;\nlet raw = lead.claudeText;\nif (raw === undefined) {            // real Claude response\n  raw = (lead.content && lead.content[0] && lead.content[0].text) || '';\n}\nlet d, parseOk = true;\ntry {\n  d = JSON.parse(String(raw).replace(/^```json\\s*|^```\\s*|```\\s*$/gm, '').trim());\n} catch (e) { parseOk = false; d = {}; }\nconst required = ['language', 'intent', 'subject', 'body'];\nconst complete = parseOk && required.every(k => typeof d[k] === 'string' && d[k].length > 0);\nconst needsHuman = !complete || d.urgent === true || d.contains_health_info === true;\nconst original = $('Validate input').first().json;\nreturn [{ json: {\n  status: needsHuman ? 'needs_human_review' : 'draft_pending_approval',\n  reason: !complete ? 'model output invalid' : d.urgent ? 'urgent wording detected' : d.contains_health_info ? 'health info in message' : null,\n  language: d.language || null,\n  intent: d.intent || null,\n  draft: complete ? { to: original.email, subject: d.subject, body: d.body } : null,\n  source: lead.source || 'claude',\n  respondedInMs: Date.now() - new Date(original.receivedAt).getTime(),\n  lead: { name: original.name, clinic: original.clinic },\n} }];"
+        }
+      },
+      {
+        "id": "n8",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1320,
+          200
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify($json) }}",
+          "options": {}
+        }
+      }
+    ],
+    "connections": {
+      "Lead webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate input": {
+        "main": [
+          [
+            {
+              "node": "Mock mode?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Mock mode?": {
+        "main": [
+          [
+            {
+              "node": "Mock reply (demo only)",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Claude request",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Mock reply (demo only)": {
+        "main": [
+          [
+            {
+              "node": "Parse & guardrails",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Claude request": {
+        "main": [
+          [
+            {
+              "node": "Claude draft",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claude draft": {
+        "main": [
+          [
+            {
+              "node": "Parse & guardrails",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse & guardrails": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "active": false
+  }
+]

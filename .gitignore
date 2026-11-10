@@ -1,0 +1,26 @@
+# Secrets and local config
+.env
+.env.*
+*.pem
+*.key
+credentials*.json
+
+# n8n local data
+.n8n/
+*.sqlite
+*.sqlite-journal
+
+# Node
+node_modules/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+.obsidian/
+
+# Office lock files and trackers
+~$*
+*.xlsx

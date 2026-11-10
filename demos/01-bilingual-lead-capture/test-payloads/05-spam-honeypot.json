@@ -1,0 +1,7 @@
+{
+  "name": "Bot",
+  "email": "bot@example.com",
+  "message": "buy cheap stuff now",
+  "website": "http://spam.example",
+  "mock": true
+}
